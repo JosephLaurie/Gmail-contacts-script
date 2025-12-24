@@ -1,0 +1,58 @@
+import csv
+import datetime
+import re
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+def get_service():
+    flow = InstalledAppFlow.from_client_secrets_file(
+        'credentials.json', SCOPES)
+
+    creds = flow.run_local_server(port=0)
+
+    return build('gmail', 'v1', credentials=creds)
+
+def extract_emails(text):
+    if not text:
+        return []
+    return re.findall(r'[\w\.-]+@[\w\.-]+', text)
+
+service = get_service()
+
+one_year_ago = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
+query = f'in:sent after:{one_year_ago}'
+
+emails = set()
+next_page_token = None
+
+while True:
+    results = service.users().messages().list(
+        userId='me',
+        q=query,
+        pageToken=next_page_token
+    ).execute()
+
+    for msg in results.get('messages', []):
+        msg_data = service.users().messages().get(
+            userId='me',
+            id=msg['id'],
+            format='metadata',
+            metadataHeaders=['To', 'Cc', 'Bcc']
+        ).execute()
+
+        for h in msg_data['payload']['headers']:
+            emails.update(extract_emails(h.get('value')))
+
+    next_page_token = results.get('nextPageToken')
+    if not next_page_token:
+        break
+
+with open('gmail_sent_last_year.csv', 'w', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+    writer.writerow(['Email Address'])
+    for email in sorted(emails):
+        writer.writerow([email])
+
+print(f"Exported {len(emails)} email addresses.")
